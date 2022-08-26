@@ -81,7 +81,7 @@ class ReachNeuralDataset:
         assert day in [1, 2]
         self.filename = FILENAMES[(primate, day)]
 
-        self.raw_path = os.path.join(self.path, 'raw/%s.mat') % self.filename
+        # self.raw_path = os.path.join(self.path, 'raw/%s.mat') % self.filename
         self.processed_path = os.path.join(self.path, 'processed_ran/%s.pkl') % (self.filename + '-%.2f' % binning_period)
 
         # get binning parameters
@@ -184,16 +184,16 @@ class ReachNeuralDataset:
     def num_neurons(self):
         return self[0]['firing_rates'].shape[1]
 
-    def _process_data(self):
-        print('Preparing dataset: Binning data.')
-        # load data
-        mat_dict = loadmat(self.raw_path)
+    # def _process_data(self):
+    #     print('Preparing dataset: Binning data.')
+    #     # load data
+    #     mat_dict = loadmat(self.raw_path)
 
-        # bin data
-        data = self._bin_data(mat_dict)
+    #     # bin data
+    #     data = self._bin_data(mat_dict)
 
-        self._save_processed_data(data)
-        return data
+    #     self._save_processed_data(data)
+    #     return data
 
     def _save_processed_data(self, data):
         with open(self.processed_path, 'wb') as output:

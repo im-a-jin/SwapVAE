@@ -19,6 +19,8 @@ from vae_kits.dataloaders import spatial_only_neural
 from vae_kits.model import swapVAE_neural
 from vae_kits.trainers import swap_VAE_neural_Learner
 
+from pathlib import Path
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
@@ -39,13 +41,18 @@ flags.DEFINE_float('binning', 0.1, 'binning_period', lower_bound=0.001, upper_bo
 # Transforms
 flags.DEFINE_integer('max_lookahead', 5, 'Max lookahead.')
 
-flags.DEFINE_float('dropout_p', 0.6, 'Dropout probability.', lower_bound=0., upper_bound=1.)
+flags.DEFINE_float('dropout_p', 0.5, 'Dropout probability.', lower_bound=0., upper_bound=1.)
 flags.DEFINE_float('dropout_apply_p', 1.0, 'Probability of applying dropout.', lower_bound=0., upper_bound=1.)
 
 flags.DEFINE_float('pepper_p', 0.5, 'Pepper probability.', lower_bound=0., upper_bound=1.)
 flags.DEFINE_float('pepper_sigma', 10, 'Pepper sigma.', lower_bound=0.)
 flags.DEFINE_float('pepper_apply_p', 1.0, 'Probability of applying pepper.', lower_bound=0., upper_bound=1.)
 flags.DEFINE_boolean('structured_transform', True, 'Whether the transformations are consistent across temporal shift.')
+
+# Custom Dropout
+flags.DEFINE_integer('drop_k', 1, 'Top k variance separator')
+flags.DEFINE_float('drop_u', 0.5, 'Upper dropout probability.', lower_bound=0., upper_bound=1.)
+flags.DEFINE_float('drop_l', 0.5, 'Lower dropout probability.', lower_bound=0., upper_bound=1.)
 
 # Dataloader
 flags.DEFINE_integer('batch_size', 256, 'Batch size.')
@@ -85,8 +92,22 @@ def main_swap(argv):
         train_split=0.8,
     )
 
-    transform_temp = transforms.Pair_Compose(
-        transforms.RandomizedDropout(FLAGS.dropout_p, apply_p=FLAGS.dropout_apply_p),
+    ## Calculate variance-based dropout probabilities
+    fr = dataset.firing_rates
+    fr_var = torch.tensor(fr.var(axis=0, ddof=1))
+    # p = torch.tanh((fr_var - fr_var.min())/(fr_var.max() - fr_var.min())))
+    # p = 1 - (fr_var > 10)
+    # p = 1 - torch.sigmoid(fr_var / fr_var.mean())
+    ## Split dropout
+    k, _ = torch.topk(torch.tensor(fr_var), k=FLAGS.drop_k)
+    k = k[-1]
+    p = (fr_var >= k) * FLAGS.drop_u + (fr_var < k) * FLAGS.drop_l
+    print(p)
+
+    transform_temp = transforms.Compose(
+        # transforms.FixedDropout(FLAGS.dropout_p, apply_p=FLAGS.dropout_apply_p),
+        # transforms.RandomizedDropout(FLAGS.dropout_p, apply_p=FLAGS.dropout_apply_p),
+        transforms.EntrywiseDropout(p, apply_p=FLAGS.dropout_apply_p),
     )
 
     train_data = spatial_only_neural(dataset, transform=None, target_transform=None, train='train')
@@ -145,11 +166,15 @@ def main_swap(argv):
                     'images': images,
                     }
 
+    # Log accuracies
+    acc_logger = utils.AccLogger()
+
     learner = swap_VAE_neural_Learner_ablation(
         alpha=FLAGS.alpha,
         beta=FLAGS.beta,
         check_clf=FLAGS.check_clf,
         net=model,
+        transform=transform_temp,
         train_angular=train_angular,
         test_angular=test_angular,
         TB_LOG_NAME=TB_LOG_NAME,
@@ -158,6 +183,7 @@ def main_swap(argv):
         l_size=FLAGS.l_size,
         train_mm=train_data,
         test_mm=test_data,
+        acc_logger=acc_logger,
     )
 
     # change gpus and distributed backend if you want to just use 1 gpu
@@ -182,20 +208,31 @@ def main_swap(argv):
         firing_rates = dataset.firing_rates
         sequence_lengths = dataset.trial_lengths
 
-        transform_temp = transforms.Origin_Compose(
-            transforms.Origin_RandomizedDropout(FLAGS.dropout_p, apply_p=FLAGS.dropout_apply_p),
-        )
+#       transform_temp = transforms.Compose(
+#           transforms.Dropout(FLAGS.dropout_p, apply_p=FLAGS.dropout_apply_p)
+#           # transforms.RandomizedDropout(FLAGS.dropout_p, apply_p=FLAGS.dropout_apply_p),
+#           # transforms.EntrywiseDropout(p, apply_p=FLAGS.dropout_apply_p),
+#       )
 
         pair_sets = utils.onlywithin_indices(sequence_lengths, k_min=-5, k_max=5)
         generator = LocalGlobalGenerator(firing_rates, pair_sets, sequence_lengths,
                                          num_examples=firing_rates.shape[0],
                                          batch_size=FLAGS.batch_size,
                                          pool_batch_size=0, num_workers=FLAGS.num_workers,
+#                                        transform=transform_temp, 
                                          structured_transform=True)
         train_data = DataLoader(generator, num_workers=FLAGS.num_workers, drop_last=True)
 
     ##### model fitting
     trainer.fit(learner, train_data)
+
+    acc_i = 0
+    acc_path = Path(os.path.join(FLAGS.TB_logs_folder, FLAGS.TB_logs, "accs_" + str(acc_i) + ".dict"))
+    while acc_path.is_file():
+        acc_i += 1
+        acc_path = Path(os.path.join(FLAGS.TB_logs_folder, FLAGS.TB_logs, "accs_" + str(acc_i) + ".dict"))
+
+    torch.save(learner.acc_logger.collection, acc_path)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 
 class Pair_Compose:
     '''
@@ -51,13 +51,27 @@ class Dropout:
         self.p = p
         self.apply_p = apply_p
 
-    def __call__(self, *x_list):
+    def __call__(self, x):
         # create dropout mask (batch_size, num_neurons)
-        dropout_mask = torch.rand(x_list[0].size()) < 1 - self.p
+        dropout_mask = torch.rand(x.shape) < 1 - self.p
         # create apply mask: (batch_size,)
-        apply_mask = torch.rand(x_list[0].size(0)) < 1 - self.apply_p
+        apply_mask = torch.rand(x.shape) < 1 - self.apply_p
         dropout_mask = dropout_mask + apply_mask.view((-1, 1))
-        return [x * dropout_mask.to(x) for x in x_list]
+        return x * dropout_mask.to(x)
+
+
+class FixedDropout:
+    r"""Same as dropout but only applies to a single Tensor at a time
+    """
+    def __init__(self, p: float = 0.5, apply_p=1.):
+        self.p = p
+        self.apply_p = apply_p
+
+    def __call__(self, x):
+        dropout_mask = torch.rand(x.shape) < 1 - self.p
+        apply_mask = torch.rand(x.shape) < 1 - self.apply_p
+        dropout_mask = dropout_mask + apply_mask
+        return x * dropout_mask.to(x)
 
 
 class RandomizedDropout:
@@ -84,6 +98,56 @@ class RandomizedDropout:
         dropout_mask = dropout_mask + apply_mask
         r_x = x * dropout_mask.to(x)
         return r_x
+
+
+class EntrywiseDropout:
+    r"""
+    Drops out each individual neuron in the dataset according to its own
+    fixed probability p.
+    """
+    def __init__(self, p, apply_p=1.):
+        self.p = p
+        self.apply_p = apply_p
+
+    def __call__(self, x):
+        dropout_mask = torch.rand(x.shape) < 1 - self.p
+        apply_mask = torch.rand(x.shape) < 1 - self.apply_p
+        dropout_mask += apply_mask
+        return x * dropout_mask.to(x)
+
+
+# TODO: needs testing, address dropout scaling issue
+class DistributedDropout:
+    r"""
+    Applies dropout to a given tensor given a distribution generator,
+    mathematical transform, and application probability
+    
+    Args:
+        dist: distribution to draw random numbers from, based on
+        numpy.random.Generator
+        p (Tensor): probability of applying dropout given sample values
+        m (lambda expr): mathematical transform to perform on sampled values,
+        default identity
+        kwargs: parameters for dist
+    """
+    def __init__(self, p, apply_p=1., dist=np.random.rand, m=None, **kwargs):
+        self.dist = dist
+        self.p = p
+        self.apply_p = apply_p
+        if m is None:
+            self.m = lambda x: x
+        self.kwargs = kwargs
+
+    def set_args(**kwargs):
+        self.kwargs = kwargs
+
+    def __call__(self, x):
+        s = self.dist(**(self.kwargs), size=tuple(x.shape))
+        ms = self.m(s)
+        dropout_mask = ms < 1 - self.p
+        apply_mask = torch.rand(x.shape) < 1 - self.apply_p
+        dropout_mask += apply_mask
+        return x * mask
 
 
 class Noise:

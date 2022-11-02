@@ -74,7 +74,7 @@ class VAE_neural_Learner(pl.LightningModule):
 
 
 class swap_VAE_neural_Learner(VAE_neural_Learner):
-    def __init__(self, alpha=1, beta=1, check_clf=1, **kwargs):
+    def __init__(self, alpha=1, beta=1, check_clf=1, acc_logger=None, **kwargs):
         super().__init__(**kwargs)
         # assert self.transform is not None
         self.alpha = alpha
@@ -83,6 +83,7 @@ class swap_VAE_neural_Learner(VAE_neural_Learner):
         self.delta_acc_best = 0
         self.normal_data = False
         self.check_clf = check_clf
+        self.acc_logger = acc_logger
 
     def forward(self, img, force_val=False):
         if self.normal_data and self.transform is not None:
@@ -94,6 +95,9 @@ class swap_VAE_neural_Learner(VAE_neural_Learner):
         else:
             assert self.normal_data is False
             img1, img2 = img[0], img[1]
+            if self.transform is not None:
+                img1 = self.transform(img1)
+                img2 = self.transform(img2)
 
         return self.net(img1, img2)
 
@@ -154,6 +158,13 @@ class swap_VAE_neural_Learner(VAE_neural_Learner):
                                      'trial_angles/delta_acc_test': delta_acc.val_smooth,
                                      'trial_angles/best_acc': add["best_acc"],
                                      'trial_angles/best_delta_acc': add["best_delta_acc"],}, step=self.current_epoch)
+
+            self.acc_logger.log({'acc_train': acc.train_smooth,
+                                 'delta_acc_train': delta_acc.train_smooth,
+                                 'acc_test': acc.val_smooth,
+                                 'delta_acc_test': delta_acc.val_smooth,
+                                 'best_acc': add["best_acc"],
+                                 'best_delta_acc': add["best_delta_acc"],})
 
         # save the network
         if (self.current_epoch + 1) % self.SAVE == 0:

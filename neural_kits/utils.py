@@ -42,7 +42,6 @@ def diagu_indices(n, k_min=1, k_max=None):
         pairs = all_pairs - rm_pairs
         return np.array(list(pairs))
 
-
 def onlywithin_indices(sequence_lengths, k_min=1, k_max=None):
     cum_n = 0
     pair_arrays = []
@@ -52,6 +51,37 @@ def onlywithin_indices(sequence_lengths, k_min=1, k_max=None):
         cum_n += n
     return np.concatenate(pair_arrays).astype(int)
 
+def feature_variance(data):
+    r"""Calculates the variance of the features in the data.
+    Args:
+        data (torch.tensor): feature tensor (shape: num_samples x num_features)
+    """
+    mean = torch.mean(data, dim=0)
+    var = torch.sum((data-mean)**2, dim=0) / (data.shape[0]-1)
+    return var
+
+def sample_leverage(data):
+    r""" Calculates the leverage of the samples in the data.
+    Args:
+        data (torch.tensor): feature tensor (shape: num_samples x num_features)
+    """
+    hat = data @ torch.inverse(data.T @ data) @ data.T
+    return torch.diag(hat)
+
+class AccLogger:
+    def __init__(self):
+        self.collection = { 
+                'acc_train': [],
+                'delta_acc_train': [],
+                'acc_test': [],
+                'delta_acc_test': [],
+                'best_acc': [],
+                'best_delta_acc': [],
+                }
+
+    def log(self, accs):
+        for k in accs.keys():
+            self.collection[k].append(accs[k])
 
 class MetricLogger:
     r"""Keeps track of training and validation curves, by recording:
